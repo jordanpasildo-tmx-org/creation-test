@@ -1,0 +1,70 @@
+name: Build and Deploy to OpenShift
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Image Name (Lowercase)
+        id: meta
+        run: |
+          IMAGE_NAME="ghcr.io/${{ github.repository }}"
+          echo "image=${IMAGE_NAME,,}" >> $GITHUB_OUTPUT
+
+      - name: Build and Push Container Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Containerfile
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:${{ github.sha }}
+
+      - name: Install OpenShift CLI
+        uses: redhat-actions/openshift-tools-installer@v3
+        with:
+          oc: "4.16"
+
+      - name: Deploy to OpenShift Developer Sandbox
+        env:
+          PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN || secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          oc login --token="${{ secrets.OPENSHIFT_TOKEN }}" --server="${{ secrets.OPENSHIFT_SERVER }}" --insecure-skip-tls-verify=true
+          oc project jpasildo-tmx-dev
+
+          # Automatically configure and link ghcr pull secret for seamless unprivileged pulls
+          if [ -n "$PULL_TOKEN" ]; then
+            echo "==> Configuring ghcr-pull-secret in OpenShift project jpasildo-tmx-dev..."
+            oc create secret docker-registry ghcr-pull-secret \
+              --docker-server=ghcr.io \
+              --docker-username="${{ github.actor }}" \
+              --docker-password="$PULL_TOKEN" \
+              --dry-run=client -o yaml | oc apply -f -
+            oc secrets link default ghcr-pull-secret --for=pull || true
+          fi
+
+          oc apply -f k8s/deployment.yaml
+          oc rollout restart deployment/creation-test
+          oc rollout status deployment/creation-test --timeout=120s

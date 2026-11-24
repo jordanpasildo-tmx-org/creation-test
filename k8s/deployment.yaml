@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: creation-test
+  labels:
+    app.kubernetes.io/name: creation-test
+    app.kubernetes.io/instance: creation-test
+    app.kubernetes.io/part-of: creation-test
+    app.openshift.io/runtime: react
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: creation-test
+  template:
+    metadata:
+      labels:
+        app: creation-test
+        app.kubernetes.io/name: creation-test
+        app.kubernetes.io/instance: creation-test
+        app.kubernetes.io/part-of: creation-test
+        app.openshift.io/runtime: react
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: creation-test
+          image: ghcr.io/jordanpasildo-tmx-org/creation-test:latest
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: creation-test
+  labels:
+    app.kubernetes.io/name: creation-test
+    app.kubernetes.io/part-of: creation-test
+    app.openshift.io/runtime: react
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    app: creation-test
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: creation-test
+  labels:
+    app.kubernetes.io/name: creation-test
+    app.kubernetes.io/part-of: creation-test
+    app.openshift.io/runtime: react
+spec:
+  to:
+    kind: Service
+    name: creation-test
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
